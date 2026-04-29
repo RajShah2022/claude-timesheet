@@ -201,27 +201,56 @@ def main():
     print(f"Files after filter: {len(all_files)} ({len(main_files)} main, {len(agent_files)} agent)", flush=True)
 
     # Stage 2: extract events
-    # all_events[proj]       = [(epoch, snippet)]              — for hours/themes
-    # day_entries[date]      = [(epoch, label, proj, text)]    — for per-day display
-    #   label is "user" (real user input from main sessions) or
-    #           "agent" (task injected into sub-agent sessions)
+    # all_events[proj]  = [(epoch, snippet)]           — for hours/themes
+    # day_entries[date] = [(epoch, time_str, label, proj, text)]  — for per-day display
+    #   label "user"  = real user input from ~/.claude/history.jsonl
+    #   label "agent" = sub-agent task description or first assistant response
     all_events  = defaultdict(list)
     day_entries = defaultdict(list)
     total_lines = 0
 
-    # Helper: collect display entry
-    def maybe_add(ts, label, proj, content, local_tz):
-        text = clean_text(content)
+    def maybe_add(epoch, time_str, label, proj, text):
         if not text:
             return
-        local_dt = ts.astimezone(local_tz)
-        day_key  = local_dt.strftime("%Y-%m-%d")
-        time_str = local_dt.strftime("%H:%M")
-        day_entries[day_key].append((ts.timestamp(), time_str, label, proj, text))
+        day_key = datetime.fromtimestamp(epoch, tz=local_tz).strftime("%Y-%m-%d")
+        day_entries[day_key].append((epoch, time_str, label, proj, text))
 
-    # Process main session files — real user messages
-    for proj, f in main_files:
+    # Stage 2a: real user messages from ~/.claude/history.jsonl
+    # Each entry: {display, timestamp (ms), project, sessionId}
+    # Project path → label mapping (last path segment, same logic as proj_label)
+    history_file = Path.home() / ".claude" / "history.jsonl"
+    history_days_covered = set()
+    if history_file.exists():
+        with open(history_file, "r", errors="replace") as fh:
+            for line in fh:
+                try:
+                    entry = json.loads(line)
+                    epoch = entry.get("timestamp", 0) / 1000.0
+                    ts = datetime.fromtimestamp(epoch, tz=timezone.utc)
+                    if ts < after_utc or ts >= before_utc:
+                        continue
+                    display = str(entry.get("display") or "").strip()
+                    if not display or display.startswith("/") or len(display) < 5:
+                        continue
+                    # Map the project path to a project label
+                    proj_path = entry.get("project", "")
+                    proj = proj_path.rstrip("/").split("/")[-1] if proj_path else "unknown"
+                    time_str = ts.astimezone(local_tz).strftime("%H:%M")
+                    text = clean_text(display)
+                    if text:
+                        maybe_add(epoch, time_str, "user", proj, text)
+                        history_days_covered.add(ts.astimezone(local_tz).strftime("%Y-%m-%d"))
+                except Exception:
+                    pass
+    print(f"User messages from history.jsonl: {sum(len(v) for v in day_entries.values())}", flush=True)
+
+    # Stage 2b: sub-agent task descriptions and first assistant responses from JSONL files
+    # For days NOT covered by history.jsonl, sub-agent task descriptions fill in user intent.
+    # For ALL days, first assistant response per file shows what was done.
+    for proj, f in all_files:
         try:
+            first_user_done   = False
+            first_asst_done   = False
             with open(f, "r", errors="replace") as fh:
                 for line in fh:
                     try:
@@ -236,55 +265,42 @@ def main():
                     all_events[proj].append((ts.timestamp(), snippet))
                     total_lines += 1
 
+                    local_dt = ts.astimezone(local_tz)
+                    day_key  = local_dt.strftime("%Y-%m-%d")
+                    time_str = local_dt.strftime("%H:%M")
                     role = (entry.get("message") or {}).get("role") or entry.get("role") or ""
-                    if role in ("user", "human"):
-                        content = (entry.get("message") or {}).get("content") or entry.get("content") or ""
-                        # Skip pure tool-result turns
-                        if isinstance(content, list):
-                            if all(isinstance(i, dict) and i.get("type") in ("tool_result", "tool_use")
-                                   for i in content):
-                                continue
-                        maybe_add(ts, "user", proj, content, local_tz)
-        except Exception:
-            pass
+                    content = (entry.get("message") or {}).get("content") or entry.get("content") or ""
 
-    # Process sub-agent files — "user" messages here are agent task descriptions
-    # Take ONE task description per sub-agent session file (the first substantive one)
-    for proj, f in agent_files:
-        try:
-            first_task_done = False
-            with open(f, "r", errors="replace") as fh:
-                for line in fh:
-                    try:
-                        entry = json.loads(line)
-                    except Exception:
-                        continue
-                    ts = parse_ts(entry.get("timestamp"))
-                    if not ts or ts < after_utc or ts >= before_utc:
-                        continue
-
-                    snippet = extract_snippet(entry)
-                    all_events[proj].append((ts.timestamp(), snippet))
-                    total_lines += 1
-
-                    if first_task_done:
-                        continue
-
-                    role = (entry.get("message") or {}).get("role") or entry.get("role") or ""
-                    if role in ("user", "human"):
-                        content = (entry.get("message") or {}).get("content") or entry.get("content") or ""
+                    # Sub-agent task description: first user message per file
+                    # Only add as "agent" label if history.jsonl didn't cover this day
+                    if role in ("user", "human") and not first_user_done:
                         if isinstance(content, list):
                             if all(isinstance(i, dict) and i.get("type") in ("tool_result", "tool_use")
                                    for i in content):
                                 continue
                         text = clean_text(content)
                         if text:
-                            maybe_add(ts, "agent", proj, content, local_tz)
-                            first_task_done = True
+                            label = "agent" if day_key in history_days_covered else "user"
+                            maybe_add(ts.timestamp(), time_str, label, proj, text)
+                            first_user_done = True
+
+                    # First assistant text response per file — always useful
+                    elif role == "assistant" and not first_asst_done:
+                        text_parts = []
+                        if isinstance(content, list):
+                            for block in content:
+                                if isinstance(block, dict) and block.get("type") == "text":
+                                    text_parts.append(block.get("text", ""))
+                        else:
+                            text_parts = [str(content)]
+                        text = clean_text(" ".join(text_parts))
+                        if text:
+                            maybe_add(ts.timestamp(), time_str, "agent", proj, text)
+                            first_asst_done = True
         except Exception:
             pass
 
-    print(f"Total in-range events: {total_lines}", flush=True)
+    print(f"Total in-range JSONL events: {total_lines}", flush=True)
 
     # Stage 3: per-day hours (combined sessions, attributed to start day)
     day_hours = defaultdict(float)
