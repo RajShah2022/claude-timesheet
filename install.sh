@@ -17,13 +17,13 @@ cp "$REPO_DIR/tools/daily.py"     "$TOOLS_DIR/daily.py"
 chmod +x "$TOOLS_DIR/timesheet.py" "$TOOLS_DIR/daily.py"
 
 # Copy skill
-cp "$REPO_DIR/skills/timesheet/README.md" "$SKILLS_DIR/README.md"
+cp "$REPO_DIR/skills/timesheet/SKILL.md" "$SKILLS_DIR/SKILL.md"
 
 echo ""
 echo "Installed:"
 echo "  $TOOLS_DIR/timesheet.py"
 echo "  $TOOLS_DIR/daily.py"
-echo "  $SKILLS_DIR/README.md"
+echo "  $SKILLS_DIR/SKILL.md   ← /timesheet skill"
 echo ""
 echo "Usage in Claude Code:"
 echo "  /timesheet                  current month"

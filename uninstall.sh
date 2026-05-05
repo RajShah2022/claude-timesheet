@@ -6,8 +6,7 @@ SKILLS_DIR="$HOME/.claude/skills/timesheet"
 
 echo "Uninstalling claude-timesheet..."
 
-rm -f "$TOOLS_DIR/timesheet.py"
-rm -f "$TOOLS_DIR/daily.py"
+rm -f "$TOOLS_DIR/timesheet.py" "$TOOLS_DIR/daily.py"
 rm -rf "$SKILLS_DIR"
 
 echo "Done."

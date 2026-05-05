@@ -118,10 +118,10 @@ _NOISE_PATTERNS = re.compile(
 
 
 def clean_text(content):
-    """Return a single readable line from raw message content, or '' if system noise."""
+    """Return full cleaned text from raw message content, or '' if system noise."""
     if isinstance(content, list):
         parts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("text")]
-        content = " ".join(parts)
+        content = "\n".join(parts)
     text = str(content or "").strip()
 
     if _NOISE_PATTERNS.search(text[:400]):
@@ -131,16 +131,10 @@ def clean_text(content):
     text = re.sub(r'[A-Za-z0-9+/]{60,}={0,2}', '', text)
     # Shorten absolute paths to last 2 segments
     text = re.sub(r'/(?:[^\s/]+/){3,}([^\s/]+/[^\s/]+)', r'.../\1', text)
+    # Collapse excess blank lines
+    text = re.sub(r'\n{3,}', '\n\n', text).strip()
 
-    # Take first non-empty, non-markdown-leader line
-    for line in text.splitlines():
-        line = line.strip()
-        line = re.sub(r'^[#*`>\-=\[]+\s*', '', line)
-        if len(line) >= 20:
-            return line[:160]
-
-    flat = re.sub(r'\s+', ' ', text).strip()
-    return flat[:160] if len(flat) >= 20 else ""
+    return text if len(text) >= 10 else ""
 
 
 def classify(snippets):
@@ -362,7 +356,11 @@ def main():
         print(f"{'=' * 70}")
         for _, time_str, label, proj, text in all_msgs:
             prefix = "  " if label == "user" else "    → "
-            print(f"{prefix}[{proj}] {text}")
+            lines = text.splitlines() if text else [""]
+            indent = " " * len(prefix)
+            print(f"{prefix}[{time_str}] [{proj}] {lines[0]}")
+            for continuation in lines[1:]:
+                print(f"{indent}{continuation}")
         print()
 
     # Part 2: monthly summary
