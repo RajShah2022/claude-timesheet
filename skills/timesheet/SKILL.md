@@ -15,32 +15,33 @@ allowed-tools:
 ## Step 1: Check installation
 
 ```bash
-ls ~/.claude/tools/timesheet.py 2>/dev/null && echo "ok" || echo "missing"
+ls "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude}/tools/timesheet.py" 2>/dev/null && echo "ok" || echo "missing"
 ```
 
-If missing, tell the user to install:
-```
-git clone https://github.com/<owner>/claude-timesheet ~/Downloads/personal/claude-timesheet
-cd ~/Downloads/personal/claude-timesheet && ./install.sh
-```
+If missing, install via one of:
+- Claude Code plugin: `/plugin marketplace add RajShah2022/claude-timesheet` then `/plugin install timesheet@claude-timesheet`
+- Manual: `git clone https://github.com/RajShah2022/claude-timesheet && cd claude-timesheet && ./install.sh`
 
 ## Step 2: Parse arguments
 
 ```
 /timesheet                     → current month, all projects
 /timesheet "Mar 2026"          → specific month
-/timesheet 2026-03             → ISO form
-/timesheet "Mar 2026" myapp    → with project filter
+/timesheet 2026-03             → specific month, ISO form
+/timesheet "12 Mar 2026"       → exact day
+/timesheet 2026-03-12          → exact day, ISO form
+/timesheet "Mar 2026" myapp    → month + project filter
+/timesheet "12 Mar 2026" myapp → exact day + project filter
 ```
 
-- First argument after `/timesheet`: month string — pass to `--month`
+- First argument after `/timesheet`: month or exact date string — pass to `--month`
 - Second argument: project filter — pass to `--project`
 - No arguments: omit both flags (script defaults to current month)
 
 ## Step 3: Run
 
 ```bash
-python3 ~/.claude/tools/timesheet.py --month "MONTH" [--project "NAME"]
+python3 "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude}/tools/timesheet.py" --month "MONTH_OR_DATE" [--project "NAME"]
 ```
 
 Capture and print the **full stdout output verbatim**. Do not truncate, summarise, or reformat it.
@@ -60,7 +61,7 @@ The script produces two sections:
     → [tml] I'll search for the sidebar menu implementation
 ```
 
-- Lines **without** `→` prefix = real user-typed messages (from `~/.claude/history.jsonl`)
+- Lines **without** `→` prefix = real user-typed messages (from session JSONL files)
 - Lines **with** `→` prefix = agent task descriptions or first assistant response per session
 
 **Monthly summary section** — hours by project and theme, formatted for billing copy-paste:
@@ -82,15 +83,15 @@ Total: 30.0h
 
 ## Step 5: Explain data sources if asked
 
-- Real user messages come from `~/.claude/history.jsonl` — only available from when Claude Code started writing this file on this machine (March 2026 on most setups)
-- For months before that, only agent task descriptions are available — these still accurately reflect the work done
-- Days with only `→` lines = history.jsonl didn't cover that period
+- User messages come directly from session JSONL files in `~/.claude/projects/`
+- Each turn where `message.role == "user"` with plain-text content is a message you typed
+- Tool-result turns are skipped (they're Claude's internal tool output, not your words)
 
 ## Error handling
 
 | Symptom | Fix |
 |---------|-----|
-| `No such file: ~/.claude/tools/timesheet.py` | Run `./install.sh` from the repo |
-| `Cannot parse month` | Use `Feb 2026`, `2026-02`, or `February 2026` |
+| `No such file: .../tools/timesheet.py` | Plugin: `/plugin install timesheet@claude-timesheet` · Manual: `./install.sh` |
+| `Cannot parse ...` | Use `12 Feb 2026` / `2026-02-12` for a day, or `Feb 2026` / `2026-02` for a month |
 | All lines start with `→` | Normal for months before history.jsonl coverage |
 | 0 events for a day | No Claude Code sessions that day |

@@ -7,38 +7,54 @@ Usage:
     daily.py [--month "Feb 2026"] [--project myapp] [--output /tmp/out.txt]
 """
 import sys, json, re, argparse
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from collections import defaultdict
 
 PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
 
-def parse_month(month_str):
+def parse_time_range(time_str):
+    """Accept a month ('Feb 2026', '2026-02') or exact date ('12 Feb 2026', '2026-02-12')."""
     local_tz = datetime.now().astimezone().tzinfo
-    if not month_str:
+
+    if not time_str:
         now = datetime.now(local_tz)
-        year, month = now.year, now.month
-    else:
-        parsed = None
-        for fmt in ("%Y-%m", "%b %Y", "%B %Y"):
-            try:
-                dt = datetime.strptime(month_str.strip(), fmt)
-                year, month = dt.year, dt.month
-                parsed = True
-                break
-            except ValueError:
-                continue
-        if not parsed:
-            sys.exit(f"Cannot parse month: {month_str!r}. Use YYYY-MM, 'Feb 2026', or 'February 2026'.")
+        start = datetime(now.year, now.month, 1, 0, 0, 0, tzinfo=local_tz)
+        if now.month == 12:
+            end = datetime(now.year + 1, 1, 1, 0, 0, 0, tzinfo=local_tz)
+        else:
+            end = datetime(now.year, now.month + 1, 1, 0, 0, 0, tzinfo=local_tz)
+        return start.astimezone(timezone.utc), end.astimezone(timezone.utc), local_tz, f"{now.year:04d}-{now.month:02d}"
 
-    start = datetime(year, month, 1, 0, 0, 0, tzinfo=local_tz)
-    if month == 12:
-        end = datetime(year + 1, 1, 1, 0, 0, 0, tzinfo=local_tz)
-    else:
-        end = datetime(year, month + 1, 1, 0, 0, 0, tzinfo=local_tz)
+    # Try exact-date formats first (they include a day component)
+    for fmt in ("%d %b %Y", "%d %B %Y", "%Y-%m-%d", "%b %d %Y", "%B %d %Y"):
+        try:
+            dt = datetime.strptime(time_str.strip(), fmt)
+            start = datetime(dt.year, dt.month, dt.day, 0, 0, 0, tzinfo=local_tz)
+            end   = start + timedelta(days=1)
+            return start.astimezone(timezone.utc), end.astimezone(timezone.utc), local_tz, start.strftime("%Y-%m-%d")
+        except ValueError:
+            continue
 
-    return start.astimezone(timezone.utc), end.astimezone(timezone.utc), local_tz, f"{year:04d}-{month:02d}"
+    # Fall back to month-only formats
+    for fmt in ("%Y-%m", "%b %Y", "%B %Y"):
+        try:
+            dt = datetime.strptime(time_str.strip(), fmt)
+            year, month = dt.year, dt.month
+            start = datetime(year, month, 1, 0, 0, 0, tzinfo=local_tz)
+            if month == 12:
+                end = datetime(year + 1, 1, 1, 0, 0, 0, tzinfo=local_tz)
+            else:
+                end = datetime(year, month + 1, 1, 0, 0, 0, tzinfo=local_tz)
+            return start.astimezone(timezone.utc), end.astimezone(timezone.utc), local_tz, f"{year:04d}-{month:02d}"
+        except ValueError:
+            continue
+
+    sys.exit(
+        f"Cannot parse {time_str!r}. "
+        "Use '12 Feb 2026', '2026-02-12' for a day, or 'Feb 2026', '2026-02' for a month."
+    )
 
 
 def proj_label(d: Path) -> str:
@@ -77,11 +93,30 @@ def quick_peek(path: Path):
         return None, None
 
 
+_NOISE_PATTERNS = re.compile(
+    r"your task is to create a (detailed )?summary"
+    r"|SUGGESTION MODE"
+    r"|Request interrupted by user"
+    r"|suggest what the user might naturally type"
+    r"|paying close attention to the user.s explicit requests"
+    r"|<local-command-caveat>"
+    r"|<local-command-stdout>"
+    r"|<command-name>"
+    r"|Base directory for this skill"
+    r"|This session is being continued from a previous conversation",
+    re.IGNORECASE,
+)
+
+
 def clean_text(content):
     if isinstance(content, list):
         parts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("text")]
         content = "\n".join(parts)
     text = str(content or "").strip()
+
+    if _NOISE_PATTERNS.search(text[:1000]):
+        return ""
+
     text = re.sub(r'[A-Za-z0-9+/]{60,}={0,2}', '[binary]', text)
     text = re.sub(r'[ \t]+', ' ', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
@@ -90,13 +125,13 @@ def clean_text(content):
 
 def main():
     ap = argparse.ArgumentParser(description="Per-day work log from Claude Code sessions")
-    ap.add_argument("--month", default="", help="Month to extract (e.g. 'Feb 2026' or '2026-02'). Defaults to current month.")
+    ap.add_argument("--month", default="", help="Month or exact date to extract (e.g. 'Feb 2026', '2026-02', '12 Feb 2026', '2026-02-12'). Defaults to current month.")
     ap.add_argument("--project", default="", help="Restrict to project dirs matching this substring.")
     ap.add_argument("--output", default="", help="Write output to this file instead of stdout.")
     args = ap.parse_args()
 
-    after_utc, before_utc, local_tz, month_label = parse_month(args.month)
-    print(f"Month: {month_label} | UTC range: {after_utc.strftime('%Y-%m-%dT%H:%M:%SZ')} → {before_utc.strftime('%Y-%m-%dT%H:%M:%SZ')}", file=sys.stderr, flush=True)
+    after_utc, before_utc, local_tz, month_label = parse_time_range(args.month)
+    print(f"Range: {month_label} | UTC: {after_utc.strftime('%Y-%m-%dT%H:%M:%SZ')} → {before_utc.strftime('%Y-%m-%dT%H:%M:%SZ')}", file=sys.stderr, flush=True)
 
     # Candidate project dirs
     proj_dirs = [d for d in sorted(PROJECTS_DIR.iterdir()) if d.is_dir()]
@@ -145,6 +180,10 @@ def main():
                         items = content
                         if all(isinstance(i, dict) and i.get("type") in ("tool_result", "tool_use") for i in items):
                             continue
+
+                    # Skip slash commands
+                    if isinstance(content, str) and content.lstrip().startswith("/"):
+                        continue
 
                     text = clean_text(content)
                     if not text or len(text) < 10:

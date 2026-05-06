@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "timesheet",
+  "description": "Generate a monthly timesheet and per-day work log from your Claude Code session history. No external services, runs locally against ~/.claude/projects/.",
+  "author": { "name": "Raj Shah", "url": "https://github.com/RajShah2022" },
+  "homepage": "https://github.com/RajShah2022/claude-timesheet",
+  "repository": "https://github.com/RajShah2022/claude-timesheet",
+  "license": "MIT",
+  "keywords": ["timesheet", "billing", "productivity", "session-history", "reporting"]
+}
