@@ -3,6 +3,6 @@
   "name": "claude-timesheet",
   "owner": { "name": "Raj Shah" },
   "plugins": [
-    { "name": "timesheet", "source": "github.com", "repo": "RajShah2022/claude-timesheet" }
+    { "name": "timesheet", "source": { "source": "github", "repo": "RajShah2022/claude-timesheet" } }
   ]
 }
